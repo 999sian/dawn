@@ -438,6 +438,23 @@ MaybeError ValidateTextureUsageConstraints(
         "The texture usage (%s) includes %s, which is incompatible with the format (%s).", usage,
         wgpu::TextureUsage::StorageAttachment, format->format);
 
+    if (usage & wgpu::TextureUsage::FragmentDensityMap) {
+        DAWN_INVALID_IF(!device->HasFeature(Feature::FragmentDensityMap),
+                        "The texture usage (%s) includes %s, which requires %s to be enabled.",
+                        usage, wgpu::TextureUsage::FragmentDensityMap,
+                        wgpu::FeatureName::FragmentDensityMap);
+        constexpr wgpu::TextureUsage kFragmentDensityMapUsages =
+            wgpu::TextureUsage::FragmentDensityMap | wgpu::TextureUsage::CopyDst;
+        DAWN_INVALID_IF(!IsSubset(usage, kFragmentDensityMapUsages),
+                        "The texture usage (%s) includes %s, which may only be combined with %s.",
+                        usage, wgpu::TextureUsage::FragmentDensityMap, wgpu::TextureUsage::CopyDst);
+        DAWN_INVALID_IF(format->format != wgpu::TextureFormat::RG8Unorm ||
+                            textureDimension != wgpu::TextureDimension::e2D,
+                        "A texture with usage %s must be a 2D %s texture (was %s %s).",
+                        wgpu::TextureUsage::FragmentDensityMap, wgpu::TextureFormat::RG8Unorm,
+                        textureDimension, format->format);
+    }
+
     const auto kTransientAttachment = wgpu::TextureUsage::TransientAttachment;
     if (usage & kTransientAttachment) {
         DAWN_INVALID_IF(device->IsToggleEnabled(Toggle::DisableTransientAttachment),
@@ -820,6 +837,22 @@ MaybeError ValidateTextureDescriptor(
             descriptor->size.depthOrArrayLayers, descriptor->mipLevelCount);
         DAWN_INVALID_IF(!descriptor->viewFormats.empty(),
                         "Transient textures must not have any viewFormats");
+    }
+
+    if (usage & wgpu::TextureUsage::FragmentDensityMap) {
+        DAWN_INVALID_IF(descriptor->size.depthOrArrayLayers != 1 ||
+                            descriptor->mipLevelCount != 1 || descriptor->sampleCount != 1,
+                        "Textures with usage %s must have depthOrArrayLayers (%u), mipLevelCount "
+                        "(%u) and sampleCount (%u) of 1.",
+                        wgpu::TextureUsage::FragmentDensityMap, descriptor->size.depthOrArrayLayers,
+                        descriptor->mipLevelCount, descriptor->sampleCount);
+        // One texel per 16x16 pixels of the largest possible render pass. Larger density maps
+        // could exceed Vulkan's ceil(maxFramebufferSize / minFragmentDensityTexelSize) limit.
+        const uint32_t maxSize = (device->GetLimits().v1.maxTextureDimension2D + 15) / 16;
+        DAWN_INVALID_IF(descriptor->size.width > maxSize || descriptor->size.height > maxSize,
+                        "Textures with usage %s must not be larger than %u x %u (was %u x %u).",
+                        wgpu::TextureUsage::FragmentDensityMap, maxSize, maxSize,
+                        descriptor->size.width, descriptor->size.height);
     }
 
     DAWN_TRY(ValidateTextureDimension(descriptor->dimension));

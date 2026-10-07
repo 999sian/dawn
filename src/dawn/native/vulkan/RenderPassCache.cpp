@@ -46,8 +46,8 @@ namespace dawn::native::vulkan {
 namespace {
 
 // Contains the attachment description that will be chained in the create info
-// The order of all attachments in attachmentDescs is "color-depthstencil-resolve".
-constexpr uint32_t kMaxAttachmentCount = kMaxColorAttachments * 2 + 1;
+// The order of all attachments in attachmentDescs is "color-depthstencil-resolve-densitymap".
+constexpr uint32_t kMaxAttachmentCount = kMaxColorAttachments * 2 + 2;
 
 class RenderPassCreateInfo {
   public:
@@ -80,6 +80,7 @@ class RenderPassCreateInfo {
     std::array<VkAttachmentDescription, kMaxAttachmentCount> attachmentDescs = {};
     std::array<VkSubpassDescription, 2> subpassDescs = {};
     std::array<VkSubpassDependency, 2> subpassDependencies = {};
+    VkRenderPassFragmentDensityMapCreateInfoEXT fragmentDensityMapInfo = {};
 
     VkRenderPassCreateInfo createInfo = {};
 };
@@ -137,6 +138,7 @@ class RenderPassCreateInfo2 {
     std::array<VkAttachmentDescription2, kMaxAttachmentCount> attachmentDescs = {};
     std::array<VkSubpassDescription2, 2> subpassDescs = {};
     std::array<VkSubpassDependency2, 2> subpassDependencies = {};
+    VkRenderPassFragmentDensityMapCreateInfoEXT fragmentDensityMapInfo = {};
 
     VkRenderPassCreateInfo2 createInfo = {};
 };
@@ -239,6 +241,34 @@ void InitializePassInfo(Device* device, const RenderPassCacheQuery& query, InfoT
 
         attachmentCount++;
         resolveAttachmentCount++;
+    }
+
+    // Vulkan render passes with and without a fragment density map are not compatible, so when
+    // FragmentDensityMap is enabled every render pass gets one, including the render passes used
+    // to create pipelines. Render passes that don't chain a RenderPassFragmentDensityMap use the
+    // device's full density map (see RecordBeginRenderPass).
+    if (device->HasFeature(Feature::FragmentDensityMap)) {
+        auto& densityMapDesc = passInfo.attachmentDescs[attachmentCount];
+        densityMapDesc.flags = 0;
+        densityMapDesc.format = VK_FORMAT_R8G8_UNORM;
+        densityMapDesc.samples = VK_SAMPLE_COUNT_1_BIT;
+        densityMapDesc.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        densityMapDesc.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        densityMapDesc.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        densityMapDesc.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        densityMapDesc.initialLayout = VK_IMAGE_LAYOUT_FRAGMENT_DENSITY_MAP_OPTIMAL_EXT;
+        densityMapDesc.finalLayout = VK_IMAGE_LAYOUT_FRAGMENT_DENSITY_MAP_OPTIMAL_EXT;
+
+        passInfo.fragmentDensityMapInfo.sType =
+            VK_STRUCTURE_TYPE_RENDER_PASS_FRAGMENT_DENSITY_MAP_CREATE_INFO_EXT;
+        passInfo.fragmentDensityMapInfo.pNext = nullptr;
+        passInfo.fragmentDensityMapInfo.fragmentDensityMapAttachment = {
+            .attachment = attachmentCount,
+            .layout = VK_IMAGE_LAYOUT_FRAGMENT_DENSITY_MAP_OPTIMAL_EXT,
+        };
+        passInfo.createInfo.pNext = &passInfo.fragmentDensityMapInfo;
+
+        attachmentCount++;
     }
 
     uint32_t subpassCount = 0;

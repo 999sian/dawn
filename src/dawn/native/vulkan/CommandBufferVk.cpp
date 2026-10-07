@@ -1006,6 +1006,16 @@ MaybeError RecordBeginRenderPass(CommandRecordingContext* recordingContext,
             }
         }
 
+        // Every render pass has a fragment density map attachment when the feature is enabled,
+        // see RenderPassCache.cpp. The user's map was transitioned with the pass' resources, the
+        // default one always stays in the fragment density map layout.
+        if (device->HasFeature(Feature::FragmentDensityMap)) {
+            TextureView* densityMap = renderPass->fragmentDensityMap != nullptr
+                                          ? ToBackend(renderPass->fragmentDensityMap.Get())
+                                          : device->GetDefaultFragmentDensityMap();
+            DAWN_TRY(framebufferQuery.AddAttachment(densityMap));
+        }
+
         DAWN_TRY_ASSIGN(
             framebuffer,
             device->GetFramebufferCache()->GetOrCreate(

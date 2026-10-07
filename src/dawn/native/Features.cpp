@@ -484,6 +484,12 @@ static constexpr auto kFeatureInfo = std::to_array<FeatureEnumAndInfo>({
       "https://dawn.googlesource.com/dawn/+/refs/heads/main/docs/dawn/features/"
       "dawn_allow_undefined_load_store_op.md",
       FeatureInfo::FeatureState::Stable}},
+    {Feature::FragmentDensityMap,
+     {"Supports attaching a fragment density map (RG8Unorm, one texel per 16x16 framebuffer "
+      "pixels) to render passes with RenderPassFragmentDensityMap. Vulkan only, backed by "
+      "VK_EXT_fragment_density_map.",
+      "https://registry.khronos.org/vulkan/specs/latest/man/html/VK_EXT_fragment_density_map.html",
+      FeatureInfo::FeatureState::Experimental}},
 
     // Comment to separate the } so it is clearer what to copy-paste to add a feature.
 });

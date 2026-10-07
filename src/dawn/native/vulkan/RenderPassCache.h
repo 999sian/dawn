@@ -90,8 +90,9 @@ struct RenderPassCacheQuery {
 
 // Caches VkRenderPasses so that we don't create duplicate ones for every RenderPipeline or
 // render pass. We always arrange the order of attachments in "color-depthstencil-resolve" order
-// when creating render pass and framebuffer so that we can always make sure the order of
-// attachments in the rendering pipeline matches the one of the framebuffer.
+// (followed by the fragment density map with Feature::FragmentDensityMap) when creating render
+// pass and framebuffer so that we can always make sure the order of attachments in the rendering
+// pipeline matches the one of the framebuffer.
 // All the operations on RenderPassCache are guaranteed to be thread-safe.
 // TODO(cwallez@chromium.org): Make it an LRU cache somehow?
 class RenderPassCache {

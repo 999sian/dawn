@@ -28,6 +28,8 @@
 #include "src/dawn/native/vulkan/DeviceVk.h"
 
 #include <algorithm>
+#include <cstring>
+#include <limits>
 #include <utility>
 
 #include "dawn/dawn_version.h"
@@ -36,6 +38,7 @@
 #include "src/dawn/native/BackendConnection.h"
 #include "src/dawn/native/ChainUtils.h"
 #include "src/dawn/native/CreatePipelineAsyncEvent.h"
+#include "src/dawn/native/DynamicUploader.h"
 #include "src/dawn/native/Error.h"
 #include "src/dawn/native/ErrorData.h"
 #include "src/dawn/native/Instance.h"
@@ -201,7 +204,13 @@ MaybeError Device::Initialize(const UnpackedPtr<DeviceDescriptor>& descriptor) {
         mFramebufferFetchHelper = std::make_unique<FramebufferFetchHelper>(this);
     }
 
-    return DeviceBase::Initialize(descriptor, std::move(queue));
+    DAWN_TRY(DeviceBase::Initialize(descriptor, std::move(queue)));
+
+    if (HasFeature(Feature::FragmentDensityMap)) {
+        DAWN_TRY(InitializeDefaultFragmentDensityMap());
+    }
+
+    return {};
 }
 
 Device::~Device() {
@@ -416,6 +425,64 @@ FramebufferFetchHelper* Device::GetFramebufferFetchHelper() {
     return mFramebufferFetchHelper.get();
 }
 
+TextureView* Device::GetDefaultFragmentDensityMap() const {
+    DAWN_ASSERT(mDefaultFragmentDensityMap != nullptr);
+    return ToBackend(mDefaultFragmentDensityMap.Get());
+}
+
+MaybeError Device::InitializeDefaultFragmentDensityMap() {
+    // The device mutex (if any) exists once DeviceBase::Initialize returns.
+    auto deviceGuard = GetGuard();
+
+    // VUID-VkFramebufferCreateInfo-pAttachments-02555/02556 require the density map to be at least
+    // ceil(framebuffer size / maxFragmentDensityTexelSize), so this covers any framebuffer. Density
+    // map reads are clamped to its extent so its size doesn't matter otherwise.
+    const VkExtent2D& maxTexelSize =
+        mDeviceInfo.fragmentDensityMapProperties.maxFragmentDensityTexelSize;
+    const uint32_t maxFramebufferSize = GetLimits().v1.maxTextureDimension2D;
+
+    TextureDescriptor desc;
+    desc.label = "Dawn_DefaultFragmentDensityMap";
+    desc.size = {(maxFramebufferSize + maxTexelSize.width - 1) / maxTexelSize.width,
+                 (maxFramebufferSize + maxTexelSize.height - 1) / maxTexelSize.height, 1};
+    desc.format = wgpu::TextureFormat::RG8Unorm;
+    desc.usage = wgpu::TextureUsage::FragmentDensityMap | wgpu::TextureUsage::CopyDst;
+    Ref<TextureBase> texture;
+    DAWN_TRY_ASSIGN(texture, CreateTexture(&desc));
+
+    // Every texel is (255, 255): full density.
+    constexpr uint32_t kTexelByteSize = 2;
+    const uint32_t bytesPerRow =
+        Align(desc.size.width * kTexelByteSize, GetOptimalBytesPerRowAlignment());
+    const uint64_t uploadSize = uint64_t{bytesPerRow} * desc.size.height;
+    DAWN_TRY(GetDynamicUploader()->WithUploadReservation(
+        uploadSize,
+        std::max(uint64_t{kTexelByteSize}, GetOptimalBufferToTextureCopyOffsetAlignment()),
+        [&](UploadReservation reservation) -> MaybeError {
+            memset(reservation.mappedPointer, 0xFF, checked_cast<size_t>(uploadSize));
+
+            TexelCopyBufferLayout src;
+            src.offset = reservation.offsetInBuffer;
+            src.bytesPerRow = bytesPerRow;
+            src.rowsPerImage = desc.size.height;
+            TextureCopy dst;
+            dst.texture = texture;
+            dst.aspect = Aspect::Color;
+            return CopyFromStagingToTexture(reservation.buffer.Get(), src, dst, desc.size);
+        }));
+
+    // Without fragmentDensityMapDynamic the density map is read on the host when render passes are
+    // recorded, so its contents (and layout, see CopyFromStagingToTextureImpl) must be final before
+    // any render pass is recorded. It is never written again.
+    Queue* queue = ToBackend(GetQueue());
+    DAWN_TRY(queue->SubmitPendingCommands());
+    DAWN_TRY(queue->WaitForQueueSerial(queue->GetLastSubmittedCommandSerial(),
+                                       std::numeric_limits<Nanoseconds>::max()));
+
+    DAWN_TRY_ASSIGN(mDefaultFragmentDensityMap, texture->CreateView());
+    return {};
+}
+
 Ref<FencedDeleter>& Device::GetFencedDeleter() {
     return mDeleter;
 }
@@ -448,8 +515,12 @@ void Device::CacheStaticSampler(const Ref<Sampler>& s) {
 ResultOrError<VulkanDeviceKnobs> Device::CreateDevice(VkPhysicalDevice vkPhysicalDevice) {
     VulkanDeviceKnobs usedKnobs = {};
 
-    // Ask for all available known extensions.
+    // Ask for all available known extensions, except VK_EXT_fragment_density_map which is only
+    // enabled with Feature::FragmentDensityMap so that other devices behave exactly as before.
     usedKnobs.extensions = mDeviceInfo.extensions;
+    if (!HasFeature(Feature::FragmentDensityMap)) {
+        usedKnobs.extensions.set(DeviceExt::FragmentDensityMap, false);
+    }
 
     std::vector<const char*> extensionNames;
     for (DeviceExt ext : usedKnobs.extensions) {
@@ -698,13 +769,22 @@ ResultOrError<VulkanDeviceKnobs> Device::CreateDevice(VkPhysicalDevice vkPhysica
         featuresChain.Add(&usedKnobs.descriptorIndexingFeatures);
     }
 
+    if (HasFeature(Feature::FragmentDensityMap)) {
+        DAWN_ASSERT(usedKnobs.HasExt(DeviceExt::FragmentDensityMap));
+        usedKnobs.fragmentDensityMapFeatures.fragmentDensityMap = VK_TRUE;
+        usedKnobs.fragmentDensityMapFeatures.fragmentDensityMapNonSubsampledImages = VK_TRUE;
+        featuresChain.Add(&usedKnobs.fragmentDensityMapFeatures,
+                          VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_DENSITY_MAP_FEATURES_EXT);
+    }
+
     // Determine what Vulkan render pass method will be used for the device.
     // Dynamic Rendering can be used if the extension is available AND the DawnLoadResolveTexture
-    // feature is not being used.
+    // and FragmentDensityMap features are not being used.
     // TODO(crbug.com/463893794): Remove this restriction when DawnLoadResolveTexture is supported
     // by the Dynamic Rendering path.
+    // FragmentDensityMap is only implemented with VkRenderPasses (see RenderPassCache.cpp).
     if (IsToggleEnabled(Toggle::VulkanUseDynamicRendering) &&
-        !HasFeature(Feature::DawnLoadResolveTexture)) {
+        !HasFeature(Feature::DawnLoadResolveTexture) && !HasFeature(Feature::FragmentDensityMap)) {
         DAWN_CHECK(usedKnobs.HasExt(DeviceExt::DynamicRendering));
         usedKnobs.dynamicRenderingFeatures = mDeviceInfo.dynamicRenderingFeatures;
         featuresChain.Add(&usedKnobs.dynamicRenderingFeatures);
@@ -859,6 +939,15 @@ MaybeError Device::CopyFromStagingToTextureImpl(BufferBase* source,
     // copy command.
     this->fn.CmdCopyBufferToImage(recordingContext->commandBuffer, ToBackend(source)->GetHandle(),
                                   dstImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+
+    // Without fragmentDensityMapDynamic, density maps are read on the host when render passes are
+    // recorded, so they must already be in their final layout then: transition them now so that
+    // waiting for the upload to complete is enough before recording render passes using them.
+    if (dst.texture->GetInternalUsage() & wgpu::TextureUsage::FragmentDensityMap) {
+        ToBackend(dst.texture)
+            ->TransitionUsageNow(recordingContext, wgpu::TextureUsage::FragmentDensityMap,
+                                 wgpu::ShaderStage::None, range);
+    }
     return {};
 }
 
@@ -1094,6 +1183,9 @@ void Device::DestroyImpl(DestroyReason reason) {
     }
 
     mFramebufferFetchHelper.reset();
+    // Breaks the device <-> view reference cycle. The view was already destroyed with the
+    // device's other objects.
+    mDefaultFragmentDensityMap = nullptr;
 
     mDescriptorAllocatorsPendingDeallocation.Use([&](auto pending) {
         for (Ref<DescriptorSetAllocator>& allocator : pending->IterateUpTo(kMaxExecutionSerial)) {

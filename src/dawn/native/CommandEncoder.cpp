@@ -928,6 +928,41 @@ MaybeError ValidateRenderPassPLS(DeviceBase* device,
     return ValidatePLSInfo(device, pls->totalPixelLocalStorageSize, attachments);
 }
 
+// The density map is read with one texel per 16x16 framebuffer pixels (Vulkan derives the texel
+// size from the map size and the PhysicalDevice only exposes the feature when 16x16 is within the
+// implementation's [min, max] fragment density texel size).
+MaybeError ValidateRenderPassFragmentDensityMap(DeviceBase* device,
+                                                const RenderPassFragmentDensityMap* fdm,
+                                                UsageValidationMode usageValidationMode,
+                                                const RenderPassValidationState* validationState) {
+    DAWN_INVALID_IF(!device->HasFeature(Feature::FragmentDensityMap),
+                    "RenderPassFragmentDensityMap can't be used without %s.",
+                    ToAPI(Feature::FragmentDensityMap));
+
+    TextureViewBase* view = fdm->densityMap;
+    DAWN_INVALID_IF(view == nullptr, "RenderPassFragmentDensityMap::densityMap is not set.");
+    DAWN_TRY(device->ValidateObject(view));
+    DAWN_TRY(ValidateCanUseAs(view, wgpu::TextureUsage::FragmentDensityMap, usageValidationMode));
+    DAWN_INVALID_IF(view->GetDimension() != wgpu::TextureViewDimension::e2D ||
+                        view->GetLevelCount() != 1 || view->GetLayerCount() != 1,
+                    "The density map %s is not a single mip level and array layer 2D view.", view);
+    DAWN_INVALID_IF(view->GetFormat().format != wgpu::TextureFormat::RG8Unorm,
+                    "The density map %s format (%s) is not %s.", view, view->GetFormat().format,
+                    wgpu::TextureFormat::RG8Unorm);
+
+    constexpr uint32_t kTexelSize = 16;
+    const Extent3D size = view->GetSingleSubresourceVirtualSize();
+    const uint32_t minWidth = (validationState->GetRenderWidth() + kTexelSize - 1) / kTexelSize;
+    const uint32_t minHeight = (validationState->GetRenderHeight() + kTexelSize - 1) / kTexelSize;
+    DAWN_INVALID_IF(size.width < minWidth || size.height < minHeight,
+                    "The density map %s size (%u x %u) is smaller than the %u x %u texels needed "
+                    "to cover the render pass (%u x %u) with %ux%u pixels per texel.",
+                    view, size.width, size.height, minWidth, minHeight,
+                    validationState->GetRenderWidth(), validationState->GetRenderHeight(),
+                    kTexelSize, kTexelSize);
+    return {};
+}
+
 MaybeError ValidateRenderPassDescriptor(DeviceBase* device,
                                         UnpackedPtr<RenderPassDescriptor> descriptor,
                                         UsageValidationMode usageValidationMode,
@@ -1029,6 +1064,12 @@ MaybeError ValidateRenderPassDescriptor(DeviceBase* device,
                     validationState->GetRenderHeight(),
             "RenderPassRenderAreaRect %s is not contained in the render pass (%u x %u)", area,
             validationState->GetRenderWidth(), validationState->GetRenderHeight());
+    }
+
+    if (auto* fdm = descriptor.Get<RenderPassFragmentDensityMap>()) {
+        DAWN_TRY_CONTEXT(
+            ValidateRenderPassFragmentDensityMap(device, fdm, usageValidationMode, validationState),
+            "validating RenderPassFragmentDensityMap.");
     }
 
     return {};
@@ -1658,6 +1699,12 @@ Ref<RenderPassEncoder> CommandEncoder::BeginRenderPass(const RenderPassDescripto
                     usageTracker.TextureViewUsedAs(attachment.storage,
                                                    wgpu::TextureUsage::StorageAttachment);
                 }
+            }
+
+            if (auto* fdm = descriptor.Get<RenderPassFragmentDensityMap>()) {
+                cmd->fragmentDensityMap = fdm->densityMap;
+                usageTracker.TextureViewUsedAs(fdm->densityMap,
+                                               wgpu::TextureUsage::FragmentDensityMap);
             }
 
             DAWN_TRY(renderpassWorkaroundsHelper.ApplyOnPostEncoding(

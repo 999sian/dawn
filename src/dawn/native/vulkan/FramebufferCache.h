@@ -56,7 +56,8 @@ struct FramebufferCacheTextureView {
 };
 
 // A key to query the FramebufferCache
-static const uint32_t kMaxFramebufferAttachments = kMaxColorAttachments * 2 + 1;
+// Color, depth-stencil, resolve and fragment density map attachments.
+static const uint32_t kMaxFramebufferAttachments = kMaxColorAttachments * 2 + 2;
 struct FramebufferCacheQuery {
     // Use these helpers to build the query, they make sure all relevant data is initialized and
     // masks set.

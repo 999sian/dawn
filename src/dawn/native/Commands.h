@@ -186,6 +186,10 @@ struct BeginRenderPassCmd {
 
     std::array<RenderPassStorageAttachmentInfo, kMaxPLSSlots> storageAttachments;
 
+    // Set from RenderPassFragmentDensityMap. Backends supporting Feature::FragmentDensityMap may
+    // bind a default full-density map when this is null.
+    Ref<TextureViewBase> fragmentDensityMap;
+
     // Cache the width and height of all attachments for convenience
     // TODO(https://issues.chromium.org/424536624): Use TexelCount instead of uint32_t.
     uint32_t width = 0;

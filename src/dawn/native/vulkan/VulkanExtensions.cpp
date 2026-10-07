@@ -160,6 +160,7 @@ static constexpr std::array<DeviceExtInfo, kDeviceExtCount> sDeviceExtInfos{{
     {DeviceExt::RasterizationOrderAttachmentAccess, "VK_EXT_rasterization_order_attachment_access"},
     {DeviceExt::MaximalReconvergence, "VK_KHR_shader_maximal_reconvergence"},
     {DeviceExt::SubgroupUniformControlFlow, "VK_KHR_shader_subgroup_uniform_control_flow"},
+    {DeviceExt::FragmentDensityMap, "VK_EXT_fragment_density_map"},
 
     {DeviceExt::ExternalMemoryAndroidHardwareBuffer,
      "VK_ANDROID_external_memory_android_hardware_buffer"},
@@ -240,6 +241,7 @@ DeviceExtSet EnsureDependencies(const DeviceExtSet& advertisedExts,
             case DeviceExt::ExtendedDynamicState:
             case DeviceExt::MaximalReconvergence:
             case DeviceExt::SubgroupUniformControlFlow:
+            case DeviceExt::FragmentDensityMap:
                 hasDependencies = true;
                 break;
 

@@ -84,6 +84,9 @@ class Device final : public DeviceBase {
     uint32_t GetGraphicsQueueFamily() const;
     const VkDescriptorSetLayout& GetResourceTableLayout() const;
     FramebufferFetchHelper* GetFramebufferFetchHelper();
+    // Full density map used by render passes that don't chain a RenderPassFragmentDensityMap.
+    // Only valid with Feature::FragmentDensityMap.
+    TextureView* GetDefaultFragmentDensityMap() const;
 
     Ref<FencedDeleter>& GetFencedDeleter();
     FramebufferCache* GetFramebufferCache() const;
@@ -203,6 +206,7 @@ class Device final : public DeviceBase {
         const SharedFenceDescriptor* baseDescriptor) override;
 
     ResultOrError<VulkanDeviceKnobs> CreateDevice(VkPhysicalDevice vkPhysicalDevice);
+    MaybeError InitializeDefaultFragmentDensityMap();
 
     void AppendDebugLayerMessages(ErrorData* error) override;
     std::vector<std::string> AcquireDebugLayerMessages();
@@ -223,6 +227,7 @@ class Device final : public DeviceBase {
 
     VkDescriptorSetLayout mResourceTableLayout = VK_NULL_HANDLE;
     std::unique_ptr<FramebufferFetchHelper> mFramebufferFetchHelper;
+    Ref<TextureViewBase> mDefaultFragmentDensityMap;
 
     // Entries can be appended without holding the device mutex.
     MutexProtected<SerialQueue<ExecutionSerial, Ref<DescriptorSetAllocator>>>

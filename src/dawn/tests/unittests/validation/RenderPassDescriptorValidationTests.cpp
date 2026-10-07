@@ -2963,5 +2963,114 @@ TEST_F(DawnAllowUndefinedLoadStoreOpValidationTest,
     AssertBeginRenderPassSuccess(&renderPass);
 }
 
+// Test that FragmentDensityMap usage and RenderPassFragmentDensityMap require the feature.
+TEST_F(RenderPassDescriptorValidationTest, FragmentDensityMapNotAllowed) {
+    ASSERT_DEVICE_ERROR(CreateTexture(device, wgpu::TextureDimension::e2D,
+                                      wgpu::TextureFormat::RG8Unorm, 1, 1, 1, 1, 1,
+                                      wgpu::TextureUsage::FragmentDensityMap));
+
+    wgpu::TextureView color = Create2DAttachment(device, 16, 16, wgpu::TextureFormat::RGBA8Unorm);
+    utils::ComboRenderPassDescriptor renderPass({color});
+    wgpu::RenderPassFragmentDensityMap fragmentDensityMap;
+    fragmentDensityMap.densityMap =
+        CreateTexture(device, wgpu::TextureDimension::e2D, wgpu::TextureFormat::RG8Unorm, 1, 1, 1,
+                      1, 1, wgpu::TextureUsage::TextureBinding)
+            .CreateView();
+    renderPass.nextInChain = &fragmentDensityMap;
+    AssertBeginRenderPassError(&renderPass);
+}
+
+class FragmentDensityMapValidationTest : public RenderPassDescriptorValidationTest {
+  protected:
+    static constexpr wgpu::TextureUsage kUsage =
+        wgpu::TextureUsage::FragmentDensityMap | wgpu::TextureUsage::CopyDst;
+
+    void SetUp() override {
+        DAWN_SKIP_TEST_IF(UsesWire());
+        RenderPassDescriptorValidationTest::SetUp();
+    }
+
+    std::vector<wgpu::FeatureName> GetRequiredFeatures() override {
+        return {wgpu::FeatureName::FragmentDensityMap};
+    }
+
+    wgpu::Texture CreateDensityMap(uint32_t width,
+                                   uint32_t height,
+                                   wgpu::TextureUsage usage = kUsage,
+                                   wgpu::TextureFormat format = wgpu::TextureFormat::RG8Unorm,
+                                   uint32_t arrayLayerCount = 1,
+                                   uint32_t mipLevelCount = 1) {
+        return CreateTexture(device, wgpu::TextureDimension::e2D, format, width, height,
+                             arrayLayerCount, mipLevelCount, 1, usage);
+    }
+};
+
+// Test that FragmentDensityMap textures are 2D RG8Unorm, single mip and layer, and only combined
+// with CopyDst.
+TEST_F(FragmentDensityMapValidationTest, TextureCreation) {
+    CreateDensityMap(4, 4);
+    CreateDensityMap(4, 4, wgpu::TextureUsage::FragmentDensityMap);
+
+    // At most one texel per 16x16 pixels of the largest render pass.
+    wgpu::Limits limits;
+    device.GetLimits(&limits);
+    const uint32_t maxSize = (limits.maxTextureDimension2D + 15) / 16;
+    CreateDensityMap(maxSize, maxSize);
+    ASSERT_DEVICE_ERROR(CreateDensityMap(maxSize + 1, 1));
+    ASSERT_DEVICE_ERROR(CreateDensityMap(1, maxSize + 1));
+
+    ASSERT_DEVICE_ERROR(CreateDensityMap(4, 4, kUsage | wgpu::TextureUsage::TextureBinding));
+    ASSERT_DEVICE_ERROR(CreateDensityMap(4, 4, kUsage, wgpu::TextureFormat::RGBA8Unorm));
+    ASSERT_DEVICE_ERROR(CreateDensityMap(4, 4, kUsage, wgpu::TextureFormat::RG8Unorm, 2));
+    ASSERT_DEVICE_ERROR(CreateDensityMap(4, 4, kUsage, wgpu::TextureFormat::RG8Unorm, 1, 2));
+    ASSERT_DEVICE_ERROR(CreateTexture(device, wgpu::TextureDimension::e3D,
+                                      wgpu::TextureFormat::RG8Unorm, 4, 4, 1, 1, 1, kUsage));
+}
+
+// Test that the density map covers the render pass with one texel per 16x16 pixels.
+TEST_F(FragmentDensityMapValidationTest, DensityMapSize) {
+    wgpu::TextureView color = Create2DAttachment(device, 65, 33, wgpu::TextureFormat::RGBA8Unorm);
+    utils::ComboRenderPassDescriptor renderPass({color});
+    wgpu::RenderPassFragmentDensityMap fragmentDensityMap;
+    renderPass.nextInChain = &fragmentDensityMap;
+
+    fragmentDensityMap.densityMap = CreateDensityMap(5, 3).CreateView();
+    AssertBeginRenderPassSuccess(&renderPass);
+    fragmentDensityMap.densityMap = CreateDensityMap(8, 8).CreateView();
+    AssertBeginRenderPassSuccess(&renderPass);
+    fragmentDensityMap.densityMap = CreateDensityMap(4, 3).CreateView();
+    AssertBeginRenderPassError(&renderPass);
+    fragmentDensityMap.densityMap = CreateDensityMap(5, 2).CreateView();
+    AssertBeginRenderPassError(&renderPass);
+}
+
+// Test that the density map is a 2D view with FragmentDensityMap usage.
+TEST_F(FragmentDensityMapValidationTest, DensityMapView) {
+    wgpu::TextureView color = Create2DAttachment(device, 16, 16, wgpu::TextureFormat::RGBA8Unorm);
+    utils::ComboRenderPassDescriptor renderPass({color});
+    wgpu::RenderPassFragmentDensityMap fragmentDensityMap;
+    renderPass.nextInChain = &fragmentDensityMap;
+
+    wgpu::Texture densityMap = CreateDensityMap(1, 1);
+    fragmentDensityMap.densityMap = densityMap.CreateView();
+    AssertBeginRenderPassSuccess(&renderPass);
+
+    wgpu::TextureViewDescriptor viewDesc;
+    viewDesc.usage = wgpu::TextureUsage::CopyDst;
+    fragmentDensityMap.densityMap = densityMap.CreateView(&viewDesc);
+    AssertBeginRenderPassError(&renderPass);
+
+    viewDesc.usage = wgpu::TextureUsage::None;
+    viewDesc.dimension = wgpu::TextureViewDimension::e2DArray;
+    fragmentDensityMap.densityMap = densityMap.CreateView(&viewDesc);
+    AssertBeginRenderPassError(&renderPass);
+
+    fragmentDensityMap.densityMap =
+        CreateTexture(device, wgpu::TextureDimension::e2D, wgpu::TextureFormat::RG8Unorm, 1, 1, 1,
+                      1, 1, wgpu::TextureUsage::TextureBinding)
+            .CreateView();
+    AssertBeginRenderPassError(&renderPass);
+}
+
 }  // anonymous namespace
 }  // namespace dawn

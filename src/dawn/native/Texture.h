@@ -99,7 +99,7 @@ inline constexpr wgpu::TextureComponentSwizzle kR001Swizzle = {
 
 inline constexpr wgpu::TextureUsage kReadOnlyTextureUsages =
     wgpu::TextureUsage::CopySrc | wgpu::TextureUsage::TextureBinding | kReadOnlyRenderAttachment |
-    kReadOnlyStorageTexture;
+    kReadOnlyStorageTexture | wgpu::TextureUsage::FragmentDensityMap;
 
 // Valid texture usages for a resolve texture that are loaded from at the beginning of a render
 // pass.
@@ -113,7 +113,8 @@ inline constexpr wgpu::TextureUsage kShaderTextureUsages =
 // Usages that are used to validate operations that act on texture views.
 inline constexpr wgpu::TextureUsage kTextureViewOnlyUsages =
     kShaderTextureUsages | kResolveTextureLoadAndStoreUsages |
-    wgpu::TextureUsage::TransientAttachment | wgpu::TextureUsage::StorageAttachment;
+    wgpu::TextureUsage::TransientAttachment | wgpu::TextureUsage::StorageAttachment |
+    wgpu::TextureUsage::FragmentDensityMap;
 
 // A flattened version of TextureViewDescriptor used to query the texture view cache.
 struct TextureViewQuery {

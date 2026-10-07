@@ -394,6 +394,28 @@ void PhysicalDevice::InitializeSupportedFeaturesImpl() {
         EnableFeature(Feature::MSAARenderToSingleSampled);
     }
 
+    // FragmentDensityMap density maps have one texel per 16x16 framebuffer pixels: Vulkan derives
+    // the texel size from the framebuffer/map size ratio and clamps it to [min, max]
+    // FragmentDensityTexelSize, so 16 must be in that range. Dawn never creates subsampled images
+    // so fragmentDensityMapNonSubsampledImages is required too.
+    if (mDeviceInfo.HasExt(DeviceExt::FragmentDensityMap) &&
+        mDeviceInfo.fragmentDensityMapFeatures.fragmentDensityMap == VK_TRUE &&
+        mDeviceInfo.fragmentDensityMapFeatures.fragmentDensityMapNonSubsampledImages == VK_TRUE) {
+        const VkPhysicalDeviceFragmentDensityMapPropertiesEXT& fdmProperties =
+            mDeviceInfo.fragmentDensityMapProperties;
+        VkFormatProperties rg8Properties;
+        mVulkanInstance->GetFunctions().GetPhysicalDeviceFormatProperties(
+            mVkPhysicalDevice, VK_FORMAT_R8G8_UNORM, &rg8Properties);
+        if (fdmProperties.minFragmentDensityTexelSize.width <= 16 &&
+            fdmProperties.minFragmentDensityTexelSize.height <= 16 &&
+            fdmProperties.maxFragmentDensityTexelSize.width >= 16 &&
+            fdmProperties.maxFragmentDensityTexelSize.height >= 16 &&
+            (rg8Properties.optimalTilingFeatures &
+             VK_FORMAT_FEATURE_FRAGMENT_DENSITY_MAP_BIT_EXT)) {
+            EnableFeature(Feature::FragmentDensityMap);
+        }
+    }
+
     if (mDeviceInfo.HasExt(DeviceExt::ExternalMemoryAndroidHardwareBuffer) &&
         mDeviceInfo.samplerYCbCrConversionFeatures.samplerYcbcrConversion == VK_TRUE) {
         EnableFeature(Feature::YCbCrVulkanSamplers);

@@ -168,6 +168,9 @@ VkAccessFlags VulkanAccessFlags(wgpu::TextureUsage usage, const Format& format) 
         // VK_ACCESS_INPUT_ATTACHMENT_READ_BIT.
         flags |= VK_ACCESS_INPUT_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_READ_BIT;
     }
+    if (usage & wgpu::TextureUsage::FragmentDensityMap) {
+        flags |= VK_ACCESS_FRAGMENT_DENSITY_MAP_READ_BIT_EXT;
+    }
 
     if (usage & kPresentAcquireTextureUsage) {
         // The present acquire usage is only used internally by the swapchain and is never used in
@@ -264,6 +267,9 @@ VkPipelineStageFlags VulkanPipelineStage(wgpu::TextureUsage usage,
         } else {
             flags |= VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
         }
+    }
+    if (usage & wgpu::TextureUsage::FragmentDensityMap) {
+        flags |= VK_PIPELINE_STAGE_FRAGMENT_DENSITY_PROCESS_BIT_EXT;
     }
 
     if (usage & kPresentAcquireTextureUsage) {
@@ -695,6 +701,9 @@ VkImageUsageFlags VulkanImageUsage(const DeviceBase* device,
     if (usage & wgpu::TextureUsage::TransientAttachment) {
         flags |= VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT;
     }
+    if (usage & wgpu::TextureUsage::FragmentDensityMap) {
+        flags |= VK_IMAGE_USAGE_FRAGMENT_DENSITY_MAP_BIT_EXT;
+    }
 
     // Choosing Vulkan image usages should not know about kReadOnlyRenderAttachment because that's
     // a property of when the image is used, not of the creation.
@@ -801,6 +810,9 @@ VkImageLayout VulkanImageLayout(const Format& format,
             // We always consider images being acquired from the swapchain as uninitialized,
             // so we can use the UNDEFINED Vulkan image layout.
             return VK_IMAGE_LAYOUT_UNDEFINED;
+
+        case wgpu::TextureUsage::FragmentDensityMap:
+            return VK_IMAGE_LAYOUT_FRAGMENT_DENSITY_MAP_OPTIMAL_EXT;
 
         case wgpu::TextureUsage::TransientAttachment:
             // Will be covered by RenderAttachment above, as specification of
