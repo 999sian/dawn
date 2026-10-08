@@ -722,10 +722,8 @@ ResultOrError<VulkanDeviceKnobs> Device::CreateDevice(VkPhysicalDevice vkPhysica
     // and FragmentDensityMap features are not being used.
     // TODO(crbug.com/463893794): Remove this restriction when DawnLoadResolveTexture is supported
     // by the Dynamic Rendering path.
-    // FragmentDensityMap is only implemented with VkRenderPasses (see RenderPassCache.cpp).
     if (IsToggleEnabled(Toggle::VulkanUseDynamicRendering) &&
-        !HasFeature(Feature::DawnLoadResolveTexture) && !HasFeature(Feature::FragmentDensityMap)) {
-        DAWN_CHECK(usedKnobs.HasExt(DeviceExt::DynamicRendering));
+        !HasFeature(Feature::DawnLoadResolveTexture)) {
         usedKnobs.dynamicRenderingFeatures = mDeviceInfo.dynamicRenderingFeatures;
         featuresChain.Add(&usedKnobs.dynamicRenderingFeatures);
         mRenderPassType = VulkanRenderPassType::DynamicRendering;

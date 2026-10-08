@@ -915,6 +915,17 @@ MaybeError RecordBeginDynamicRenderPass(CommandRecordingContext* recordingContex
 
         renderInfo.pNext = &msrtss;
     }
+    VkRenderingFragmentDensityMapAttachmentInfoEXT fdmInfo = {};
+    if (device->HasFeature(Feature::FragmentDensityMap) &&
+        renderPass->fragmentDensityMap != nullptr) {
+        TextureView* densityMap = ToBackend(renderPass->fragmentDensityMap.Get());
+        fdmInfo.sType =
+            VK_STRUCTURE_TYPE_RENDERING_FRAGMENT_DENSITY_MAP_ATTACHMENT_INFO_EXT;
+        fdmInfo.pNext = renderInfo.pNext;
+        fdmInfo.imageView = densityMap->GetHandle();
+        fdmInfo.imageLayout = VK_IMAGE_LAYOUT_FRAGMENT_DENSITY_MAP_OPTIMAL_EXT;
+        renderInfo.pNext = &fdmInfo;
+    }
 
     // TODO(crbug.com/463893794): Handle ExpandResolveTexture.
 
