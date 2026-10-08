@@ -85,12 +85,13 @@ struct RenderPassCacheQuery {
     wgpu::StoreOp stencilStoreOp;
     bool stencilReadOnly;
 
+    bool hasFragmentDensityMap = false;
     uint32_t sampleCount;
 };
 
 // Caches VkRenderPasses so that we don't create duplicate ones for every RenderPipeline or
 // render pass. We always arrange the order of attachments in "color-depthstencil-resolve" order
-// (followed by the fragment density map with Feature::FragmentDensityMap) when creating render
+// (followed by the fragment density map if query.hasFragmentDensityMap is true) when creating render
 // pass and framebuffer so that we can always make sure the order of attachments in the rendering
 // pipeline matches the one of the framebuffer.
 // All the operations on RenderPassCache are guaranteed to be thread-safe.

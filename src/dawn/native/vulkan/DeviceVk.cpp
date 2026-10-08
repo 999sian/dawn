@@ -206,9 +206,6 @@ MaybeError Device::Initialize(const UnpackedPtr<DeviceDescriptor>& descriptor) {
 
     DAWN_TRY(DeviceBase::Initialize(descriptor, std::move(queue)));
 
-    if (HasFeature(Feature::FragmentDensityMap)) {
-        DAWN_TRY(InitializeDefaultFragmentDensityMap());
-    }
 
     return {};
 }
@@ -425,57 +422,6 @@ FramebufferFetchHelper* Device::GetFramebufferFetchHelper() {
     return mFramebufferFetchHelper.get();
 }
 
-TextureView* Device::GetDefaultFragmentDensityMap() const {
-    DAWN_ASSERT(mDefaultFragmentDensityMap != nullptr);
-    return ToBackend(mDefaultFragmentDensityMap.Get());
-}
-
-MaybeError Device::InitializeDefaultFragmentDensityMap() {
-    // The device mutex (if any) exists once DeviceBase::Initialize returns.
-    auto deviceGuard = GetGuard();
-
-    // VUID-VkFramebufferCreateInfo-pAttachments-02555/02556 require the density map to be at least
-    // ceil(framebuffer size / maxFragmentDensityTexelSize), so this covers any framebuffer. Density
-    // map reads are clamped to its extent so its size doesn't matter otherwise.
-    const VkExtent2D& maxTexelSize =
-        mDeviceInfo.fragmentDensityMapProperties.maxFragmentDensityTexelSize;
-    const uint32_t maxFramebufferSize = GetLimits().v1.maxTextureDimension2D;
-
-    TextureDescriptor desc;
-    desc.label = "Dawn_DefaultFragmentDensityMap";
-    desc.size = {(maxFramebufferSize + maxTexelSize.width - 1) / maxTexelSize.width,
-                 (maxFramebufferSize + maxTexelSize.height - 1) / maxTexelSize.height, 1};
-    desc.format = wgpu::TextureFormat::RG8Unorm;
-    desc.usage = wgpu::TextureUsage::FragmentDensityMap | wgpu::TextureUsage::CopyDst;
-    Ref<TextureBase> texture;
-    DAWN_TRY_ASSIGN(texture, CreateTexture(&desc));
-
-    // Every texel is (255, 255): full density.
-    constexpr uint32_t kTexelByteSize = 2;
-    const uint32_t bytesPerRow =
-        Align(desc.size.width * kTexelByteSize, GetOptimalBytesPerRowAlignment());
-    const uint64_t uploadSize = uint64_t{bytesPerRow} * desc.size.height;
-    DAWN_TRY(GetDynamicUploader()->WithUploadReservation(
-        uploadSize,
-        std::max(uint64_t{kTexelByteSize}, GetOptimalBufferToTextureCopyOffsetAlignment()),
-        [&](UploadReservation reservation) -> MaybeError {
-            memset(reservation.mappedPointer, 0xFF, checked_cast<size_t>(uploadSize));
-
-            TexelCopyBufferLayout src;
-            src.offset = reservation.offsetInBuffer;
-            src.bytesPerRow = bytesPerRow;
-            src.rowsPerImage = desc.size.height;
-            TextureCopy dst;
-            dst.texture = texture;
-            dst.aspect = Aspect::Color;
-            return CopyFromStagingToTexture(reservation.buffer.Get(), src, dst, desc.size);
-        }));
-
-    // CopyFromStagingToTexture submitted the upload and waited for it (see its density map case).
-
-    DAWN_TRY_ASSIGN(mDefaultFragmentDensityMap, texture->CreateView());
-    return {};
-}
 
 Ref<FencedDeleter>& Device::GetFencedDeleter() {
     return mDeleter;
@@ -1184,8 +1130,6 @@ void Device::DestroyImpl(DestroyReason reason) {
 
     mFramebufferFetchHelper.reset();
     // Breaks the device <-> view reference cycle. The view was already destroyed with the
-    // device's other objects.
-    mDefaultFragmentDensityMap = nullptr;
 
     mDescriptorAllocatorsPendingDeallocation.Use([&](auto pending) {
         for (Ref<DescriptorSetAllocator>& allocator : pending->IterateUpTo(kMaxExecutionSerial)) {

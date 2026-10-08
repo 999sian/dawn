@@ -243,11 +243,9 @@ void InitializePassInfo(Device* device, const RenderPassCacheQuery& query, InfoT
         resolveAttachmentCount++;
     }
 
-    // Vulkan render passes with and without a fragment density map are not compatible, so when
-    // FragmentDensityMap is enabled every render pass gets one, including the render passes used
-    // to create pipelines. Render passes that don't chain a RenderPassFragmentDensityMap use the
-    // device's full density map (see RecordBeginRenderPass).
-    if (device->HasFeature(Feature::FragmentDensityMap)) {
+    // Only attach the fragment density map if the query requested one (the render pass chained a
+    // RenderPassFragmentDensityMap). Non-foveated passes are plain Vulkan render passes.
+    if (query.hasFragmentDensityMap) {
         auto& densityMapDesc = passInfo.attachmentDescs[attachmentCount];
         densityMapDesc.flags = 0;
         densityMapDesc.format = VK_FORMAT_R8G8_UNORM;
@@ -523,6 +521,7 @@ size_t RenderPassCache::CacheFuncs::operator()(const RenderPassCacheQuery& query
                     query.stencilReadOnly);
     }
     HashCombine(&hash, query.sampleCount);
+    HashCombine(&hash, query.hasFragmentDensityMap);
 
     return hash;
 }
@@ -567,6 +566,9 @@ bool RenderPassCache::CacheFuncs::operator()(const RenderPassCacheQuery& a,
             (a.stencilReadOnly != b.stencilReadOnly)) {
             return false;
         }
+    }
+    if (a.hasFragmentDensityMap != b.hasFragmentDensityMap) {
+        return false;
     }
 
     return true;
