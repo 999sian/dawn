@@ -956,10 +956,6 @@ MaybeError RecordBeginRenderPass(CommandRecordingContext* recordingContext,
                                   attachmentInfo.depthReadOnly, attachmentInfo.stencilLoadOp,
                                   attachmentInfo.stencilStoreOp, attachmentInfo.stencilReadOnly);
         }
-        if (device->HasFeature(Feature::FragmentDensityMap) &&
-            renderPass->fragmentDensityMap != nullptr) {
-            query.hasFragmentDensityMap = true;
-        }
 
         query.SetSampleCount(renderPass->attachmentState->GetSampleCount());
 
@@ -1003,11 +999,20 @@ MaybeError RecordBeginRenderPass(CommandRecordingContext* recordingContext,
             DAWN_TRY(framebufferQuery.AddAttachment(view, clearValue));
         }
 
-        // Only attach a fragment density map if the user chained a RenderPassFragmentDensityMap.
-        // Non-foveated render passes are plain Vulkan passes with no FDM attachment.
-        if (device->HasFeature(Feature::FragmentDensityMap) &&
-            renderPass->fragmentDensityMap != nullptr) {
-            TextureView* densityMap = ToBackend(renderPass->fragmentDensityMap.Get());
+        for (auto i : renderPass->attachmentState->GetColorAttachmentsMask()) {
+            if (renderPass->colorAttachments[i].resolveTarget != nullptr) {
+                TextureView* view = ToBackend(renderPass->colorAttachments[i].resolveTarget.Get());
+                DAWN_TRY(framebufferQuery.AddAttachment(view));
+            }
+        }
+
+        // Every render pass has a fragment density map attachment when the feature is enabled,
+        // see RenderPassCache.cpp. The user's map was transitioned with the pass' resources, the
+        // default one always stays in the fragment density map layout.
+        if (device->HasFeature(Feature::FragmentDensityMap)) {
+            TextureView* densityMap = renderPass->fragmentDensityMap != nullptr
+                                          ? ToBackend(renderPass->fragmentDensityMap.Get())
+                                          : device->GetDefaultFragmentDensityMap();
             DAWN_TRY(framebufferQuery.AddAttachment(densityMap));
         }
 
