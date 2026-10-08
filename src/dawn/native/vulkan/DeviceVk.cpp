@@ -903,8 +903,13 @@ MaybeError Device::CopyFromStagingToTextureImpl(BufferBase* source,
     // operation for HOST_COHERENT memory. The Vulkan spec for vkQueueSubmit describes that it
     // does an implicit availability, visibility and domain operation.
 
-    CommandRecordingContext* recordingContext =
-        ToBackend(GetQueue())->GetPendingRecordingContext(Queue::SubmitMode::Passive);
+    // Density map uploads use SubmitMode::Normal: Passive leaves the recording context not marked
+    // for submission, so the SubmitPendingCommands() below would return without submitting and the
+    // upload would share a command buffer with the render passes reading the map.
+    const bool isDensityMap =
+        dst.texture->GetInternalUsage() & wgpu::TextureUsage::FragmentDensityMap;
+    CommandRecordingContext* recordingContext = ToBackend(GetQueue())->GetPendingRecordingContext(
+        isDensityMap ? Queue::SubmitMode::Normal : Queue::SubmitMode::Passive);
 
     const TypedTexelBlockInfo& blockInfo = GetBlockInfo(dst);
 
