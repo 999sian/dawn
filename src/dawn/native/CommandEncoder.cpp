@@ -928,6 +928,17 @@ MaybeError ValidateRenderPassPLS(DeviceBase* device,
     return ValidatePLSInfo(device, pls->totalPixelLocalStorageSize, attachments);
 }
 
+// Density maps are read on the host at vkEndCommandBuffer (no fragmentDensityMapDynamic), so their
+// contents must be final before any render pass using them is recorded. Queue::WriteTexture
+// guarantees that by submitting and waiting; an encoder copy would land in the same command buffer
+// as the render passes, so it isn't allowed.
+MaybeError ValidateNotFragmentDensityMapCopyDst(const TextureBase* texture) {
+    DAWN_INVALID_IF(texture->GetUsage() & wgpu::TextureUsage::FragmentDensityMap,
+                    "%s has %s usage and can only be written with Queue::WriteTexture.", texture,
+                    wgpu::TextureUsage::FragmentDensityMap);
+    return {};
+}
+
 // The density map is read with one texel per 16x16 framebuffer pixels (Vulkan derives the texel
 // size from the map size and the PhysicalDevice only exposes the feature when 16x16 is within the
 // implementation's [min, max] fragment density texel size).
@@ -1856,6 +1867,7 @@ void CommandEncoder::APICopyBufferToTexture(const TexelCopyBufferInfo* source,
                 DAWN_TRY_CONTEXT(ValidateCanUseAs(destination.texture, wgpu::TextureUsage::CopyDst,
                                                   mUsageValidationMode),
                                  "validating destination %s usage.", destination.texture);
+                DAWN_TRY(ValidateNotFragmentDensityMapCopyDst(destination.texture));
                 DAWN_TRY(ValidateTextureSampleCountInBufferCopyCommands(destination.texture));
 
                 DAWN_TRY(ValidateLinearToDepthStencilCopyRestrictions(destination));
@@ -2069,6 +2081,7 @@ void CommandEncoder::APICopyTextureToTexture(const TexelCopyTextureInfo* sourceO
                                           mUsageValidationMode));
                 DAWN_TRY(ValidateCanUseAs(destination.texture, wgpu::TextureUsage::CopyDst,
                                           mUsageValidationMode));
+                DAWN_TRY(ValidateNotFragmentDensityMapCopyDst(destination.texture));
 
                 if (GetDevice()->IsCompatibilityMode()) {
                     DAWN_TRY(ValidateSourceTextureFormatForTextureToTextureCopyInCompatibilityMode(

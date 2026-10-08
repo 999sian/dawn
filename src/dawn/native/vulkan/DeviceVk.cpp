@@ -471,13 +471,7 @@ MaybeError Device::InitializeDefaultFragmentDensityMap() {
             return CopyFromStagingToTexture(reservation.buffer.Get(), src, dst, desc.size);
         }));
 
-    // Without fragmentDensityMapDynamic the density map is read on the host when render passes are
-    // recorded, so its contents (and layout, see CopyFromStagingToTextureImpl) must be final before
-    // any render pass is recorded. It is never written again.
-    Queue* queue = ToBackend(GetQueue());
-    DAWN_TRY(queue->SubmitPendingCommands());
-    DAWN_TRY(queue->WaitForQueueSerial(queue->GetLastSubmittedCommandSerial(),
-                                       std::numeric_limits<Nanoseconds>::max()));
+    // CopyFromStagingToTexture submitted the upload and waited for it (see its density map case).
 
     DAWN_TRY_ASSIGN(mDefaultFragmentDensityMap, texture->CreateView());
     return {};
@@ -940,13 +934,19 @@ MaybeError Device::CopyFromStagingToTextureImpl(BufferBase* source,
     this->fn.CmdCopyBufferToImage(recordingContext->commandBuffer, ToBackend(source)->GetHandle(),
                                   dstImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
 
-    // Without fragmentDensityMapDynamic, density maps are read on the host when render passes are
-    // recorded, so they must already be in their final layout then: transition them now so that
-    // waiting for the upload to complete is enough before recording render passes using them.
+    // Without fragmentDensityMapDynamic, density maps are read on the host when the command buffer
+    // containing render passes that use them ends (vkEndCommandBuffer), so the upload must have
+    // completed by then. Transition to the final layout, then submit and wait so that render passes
+    // recorded afterwards (in a later recording context) see the final contents. Density maps can
+    // only be written by Queue::WriteTexture (encoder copies are rejected), so this covers all writes.
     if (dst.texture->GetInternalUsage() & wgpu::TextureUsage::FragmentDensityMap) {
         ToBackend(dst.texture)
             ->TransitionUsageNow(recordingContext, wgpu::TextureUsage::FragmentDensityMap,
                                  wgpu::ShaderStage::None, range);
+        Queue* queue = ToBackend(GetQueue());
+        DAWN_TRY(queue->SubmitPendingCommands());
+        DAWN_TRY(queue->WaitForQueueSerial(queue->GetLastSubmittedCommandSerial(),
+                                           std::numeric_limits<Nanoseconds>::max()));
     }
     return {};
 }

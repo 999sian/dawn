@@ -3072,5 +3072,35 @@ TEST_F(FragmentDensityMapValidationTest, DensityMapView) {
     AssertBeginRenderPassError(&renderPass);
 }
 
+// Test that density maps can be written with Queue::WriteTexture but not with encoder copies: a
+// copy would share the command buffer with render passes reading the map on the host.
+TEST_F(FragmentDensityMapValidationTest, CopyDestination) {
+    wgpu::Texture densityMap = CreateDensityMap(4, 4);
+    const wgpu::Extent3D size = {4, 4, 1};
+    const std::vector<uint8_t> data(4 * 4 * 2, 0xFF);
+    wgpu::TexelCopyTextureInfo dst = utils::CreateTexelCopyTextureInfo(densityMap);
+    wgpu::TexelCopyBufferLayout layout = utils::CreateTexelCopyBufferLayout(0, 4 * 2);
+    device.GetQueue().WriteTexture(&dst, data.data(), data.size(), &layout, &size);
+
+    wgpu::Buffer buffer = utils::CreateBufferFromData(device, data.data(), data.size(),
+                                                      wgpu::BufferUsage::CopySrc);
+    wgpu::TexelCopyBufferInfo src = utils::CreateTexelCopyBufferInfo(buffer, 0, 256);
+    {
+        wgpu::CommandEncoder encoder = device.CreateCommandEncoder();
+        encoder.CopyBufferToTexture(&src, &dst, &size);
+        ASSERT_DEVICE_ERROR(encoder.Finish());
+    }
+
+    wgpu::Texture other = CreateTexture(device, wgpu::TextureDimension::e2D,
+                                        wgpu::TextureFormat::RG8Unorm, 4, 4, 1, 1, 1,
+                                        wgpu::TextureUsage::CopySrc);
+    wgpu::TexelCopyTextureInfo otherSrc = utils::CreateTexelCopyTextureInfo(other);
+    {
+        wgpu::CommandEncoder encoder = device.CreateCommandEncoder();
+        encoder.CopyTextureToTexture(&otherSrc, &dst, &size);
+        ASSERT_DEVICE_ERROR(encoder.Finish());
+    }
+}
+
 }  // anonymous namespace
 }  // namespace dawn
